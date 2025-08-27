@@ -6,512 +6,523 @@ library(pdftools)
 library(dplyr)
 library(sf)
 
+# Load map data once
+map_gpkg_path <- list.files("www", pattern = "ADMINISTRASIKECAMATAN_AR\\.gpkg$", full.names = TRUE)[1]
+map_sf <- if (!is.null(map_gpkg_path)) {
+  sf::st_read(map_gpkg_path, quiet = TRUE) %>% filter(WADMKK == "Sumba Timur")
+} else NULL
+
+# Default operator
+`%||%` <- function(x, y) if (is.null(x)) y else x
+
 # UI
 ui <- fluidPage(
-  tags$head(
-    tags$style(HTML("
-      .sticky-main {
-        position: -webkit-sticky;
-        position: sticky;
-        top: 0;              /* stick to the top */
-        z-index: 1000;       /* stay above sidebar */
-        background: white;   /* prevent overlap transparency */
-        padding: 10px;
-      }
-    "))
-  ),
-  
+  tags$head(tags$style(HTML("
+    .sticky-main {
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+      background: white;
+      padding: 10px;
+    }
+  "))),
   titlePanel(""),
   sidebarLayout(
     sidebarPanel(
-      h4("Report Settings"),
-      textInput("reportTitle", "Report Title", "Laporan Bukti Dukung Insight Statistik"),
-      textInput("reportDescription", "Description", "Laporan ini dibuat untuk memenuhi bukti dukung capaian kinerja triwulanan untuk kegiatan SAKERNAS"),
-      textInput("userName", "Author", "John Smith"),
-      hr(),
-      h4("Chart Layer"),
-      selectInput("layer", "Layer", choices = "layer 1"),
-      actionButton("add_layer", "Add Layer"),
-      actionButton("delete_layer", "Delete Layer"),
-      hr(),
-      fileInput("dataFile", "Upload CSV/XLSX", accept = c(".csv", ".xlsx")),
-      
-      selectInput("xVar", "X Variable(s)", choices = NULL, multiple = TRUE),
-      selectInput("yVar", "Y Variable(s)", choices = NULL, multiple = TRUE),
-      
-      selectInput("plotType", "Plot Type",
-                  choices = c("Scatterchart", "Barchart", "Linechart", "Piechart", "Mapchart Sumba Timur")),
-      selectInput("yTransform", "Transform Y Values", choices = c("None", "Percentage"), selected = "None"),
-      selectInput("showValues", "Show Data Values", choices = c("None", "Y Variable", "X Variable", "Both"), selected = "None"),
-      selectInput("sortVar", "Sort by (numeric variable)", choices = c("None"), selected = "None"),
-      actionButton("swap_xy", "Swap X and Y"),
-      actionButton("reverse_sort", "Reverse Sort Order"),
-      hr(),
-      h4("Chart Settings"),
-      textInput("title", "Chart Title", "Chart Title"),
-      textInput("xLabel", "X Label", "X Variable"),
-      textInput("yLabel", "Y Label", "Y Variable"),
-      numericInput("pointSize", "Point Size", 3, min = 1, max = 10),
-      numericInput("lineSize", "Line Thickness", 1.5, min = 0.5, max = 10, step = 0.5),
-      selectInput("theme", "Theme", choices = c("Minimal", "Classic", "Gray", "BW", "Blank")),
-      checkboxInput("showLegend", "Show Legend", value = TRUE),
-      checkboxInput("xTilt", "Tilt X Axis Labels (45°)", value = TRUE),
-      hr(),
+      width = 4,
+      h3("Report Settings"),
+      tabsetPanel(
+        tabPanel("Report Info",
+          textInput("reportTitle", "Report Title", 
+                    "Laporan Bukti Dukung Insight Statistik"),
+          textAreaInput("reportDescription", "Description", 
+                        "Laporan ini dibuat untuk memenuhi bukti dukung capaian kinerja triwulanan untuk kegiatan SAKERNAS",
+                        rows = 3),
+          textInput("userName", "Author", "John Smith")
+        ),
+        tabPanel("Data & Layers",
+          fileInput("dataFile", "Upload Data (CSV/XLSX)", accept = c(".csv", ".xlsx")),
+          selectInput("layer", "Layer", choices = "layer 1"),
+          fluidRow(
+            column(6, actionButton("add_layer", "➕ Add Layer")),
+            column(6, actionButton("delete_layer", "🗑️ Delete Layer"))
+          )
+        ),
+        tabPanel("Chart Variables",
+          selectInput("xVar", "X Variable(s)", choices = NULL, multiple = TRUE),
+          selectInput("yVar", "Y Variable(s)", choices = NULL, multiple = TRUE),
+          selectInput("plotType", "Plot Type", 
+                      choices = c("Scatterchart", "Barchart", "Linechart", 
+                                  "Piechart", "Mapchart Sumba Timur")),
+          selectInput("sortVar", "Sort Order X (numeric)", choices = c("None")),
+          selectInput("yTransform", "Transform Y (numeric)", 
+                      choices = c("None", "Percentage")),
+          fluidRow(
+            column(6, actionButton("swap_xy", "↔️ Swap X & Y")),
+            column(6, actionButton("reverse_sort", "🔀 Reverse Sort"))
+          )
+        ),
+        tabPanel("Reference Lines",
+          uiOutput("y_lines_ui"),
+          selectInput("selected_y_line", "Delete Line", choices = NULL),
+          fluidRow(
+            column(6, actionButton("add_y_line", "➕ Add Line")),
+            column(6, actionButton("delete_y_line", "🗑️ Delete Line"))
+          )
+        ),
+        tabPanel("Appearance",
+          textInput("title", "Chart Title", "Chart Title"),
+          textInput("xLabel", "X Label", "X Variable"),
+          checkboxInput("hide_x_label", "Hide X Axis Tick", value = FALSE),
+          textInput("yLabel", "Y Label", "Y Variable"),
+          checkboxInput("hide_y_label", "Hide Y Axis Tick", value = FALSE),
+          selectInput("showValues", "Show Data Values", 
+                      choices = c("None", "Y Variable", "X Variable", "Both"),
+                      selected = "None"),
+          numericInput("pointSize", "Point Size", 3, min = 1, max = 10),
+          numericInput("lineSize", "Line Thickness", 1.5, min = 0.5, max = 10, step = 0.5),
+          numericInput("tickLabelSize", "Tick Label Size", 11, min = 6, max = 30),
+          numericInput("axisLabelSize", "Axis Label Size", 13, min = 6, max = 40),
+          numericInput("titleSize", "Title Size", 15, min = 8, max = 50),
+          numericInput("dataLabelSize", "Data Label Size", 3, min = 1, max = 10, step = 0.5),
+          selectInput("theme", "Theme", choices = c("Minimal", "Classic", "Gray", "BW", "Blank")),
+          checkboxInput("showLegend", "Show Legend", value = TRUE),
+          checkboxInput("xTilt", "Tilt X Axis Labels (45°)", value = TRUE),
+          checkboxInput("yTilt", "Tilt Y Axis Labels (45°)", value = FALSE)
+        )
+      )
     ),
-    
     mainPanel(
-      class = "sticky-main",   # <- make main panel sticky
+      class = "sticky-main",
       plotOutput("chart", width = "800px", height = "450px"),
+      br(),
       wellPanel(
-        textAreaInput("description", "Insight", placeholder = "Add insights here...", rows = 4),
-        downloadButton("downloadPlot", "Download PDF Report")
+        textAreaInput("description", "Insight", 
+                      placeholder = "Write your insights here...", rows = 4),
+        downloadButton("downloadPlot", "⬇️ Download PDF Report")
       )
     )
   )
+
 )
 
 # Server
 server <- function(input, output, session) {
-  chart_dims <- c(width = 8.33, height = 4.6875)
-  
-  # Reactive state for layers
+  # Reactive state
   app_state <- reactiveVal(list(
-    `layer 1` = list(data = NULL, config = list(
-      xVar = NULL, yVar = NULL, title = "Chart Title",
-      xLabel = "X Variable", yLabel = "Y Variable",
-      plotType = "Scatterchart",
-      pointSize = 3, lineSize = 1.5, theme = "Minimal", description = ""
-    ))
+    `layer 1` = list(
+      data = NULL,
+      y_lines = list(),
+      config = list(
+        xVar = NULL, yVar = NULL, title = "Chart Title",
+        xLabel = "X Variable", yLabel = "Y Variable",
+        plotType = "Scatterchart", yTransform = "None", showValues = "None", sortVar = "None",
+        pointSize = 3, lineSize = 1.5, theme = "Minimal",
+        tickLabelSize = 11, axisLabelSize = 13, titleSize = 15, dataLabelSize = 3,
+        showLegend = TRUE, xTilt = TRUE, yTilt = FALSE, sortAscending = TRUE,
+        hide_x_label = FALSE, hide_y_label = FALSE, description = ""
+      )
+    )
   ))
   layer_list <- reactiveVal(c("layer 1"))
-  
-  # Sort order state (global)
-  sort_ascending <- reactiveVal(TRUE)
-  
-  # Update inputs when layer changes
+
+  # Ensure y_lines exists for all layers
+  observe({
+    state <- app_state()
+    for (layer in layer_list()) {
+      state[[layer]]$y_lines <- state[[layer]]$y_lines %||% list()
+    }
+    app_state(state)
+  })
+
+  # UI for y lines
+  output$y_lines_ui <- renderUI({
+    y_lines <- app_state()[[input$layer]]$y_lines
+    if (length(y_lines) == 0) return(tags$div("No Y lines added."))
+    tagList(lapply(seq_along(y_lines), function(i) {
+      fluidRow(
+        column(5, numericInput(paste0("y_line_value_", i), "Value", value = y_lines[[i]]$value)),
+        column(7, textInput(paste0("y_line_label_", i), "Label", value = y_lines[[i]]$label))
+      )
+    }))
+  })
+
+  # Update delete select
+  observe({
+    y_lines <- app_state()[[input$layer]]$y_lines
+    choices <- if (length(y_lines) > 0) setNames(seq_along(y_lines), paste("Line", seq_along(y_lines))) else NULL
+    updateSelectInput(session, "selected_y_line", choices = choices)
+  })
+
+  # Add y line
+  observeEvent(input$add_y_line, {
+    state <- app_state()
+    y_lines <- state[[input$layer]]$y_lines
+    y_lines[[length(y_lines) + 1]] <- list(value = 0, label = "")
+    state[[input$layer]]$y_lines <- y_lines
+    app_state(state)
+  })
+
+  # Delete y line
+  observeEvent(input$delete_y_line, {
+    sel <- as.integer(input$selected_y_line)
+    if (is.na(sel)) return()
+    state <- app_state()
+    y_lines <- state[[input$layer]]$y_lines
+    y_lines <- y_lines[-sel]
+    state[[input$layer]]$y_lines <- y_lines
+    app_state(state)
+  })
+
+  # Save y line edits
+  observe({
+    state <- app_state()
+    y_lines <- state[[input$layer]]$y_lines
+    for (i in seq_along(y_lines)) {
+      val <- input[[paste0("y_line_value_", i)]]
+      lab <- input[[paste0("y_line_label_", i)]]
+      if (!is.null(val)) y_lines[[i]]$value <- val
+      if (!is.null(lab)) y_lines[[i]]$label <- lab
+    }
+    state[[input$layer]]$y_lines <- y_lines
+    app_state(state)
+  })
+
+  chart_dims <- c(width = 8.33, height = 4.6875)
+
+  # Update inputs on layer change
   observeEvent(input$layer, {
     state <- app_state()[[input$layer]]
-    if (is.null(state$data)) {
-      updateSelectInput(session, "xVar", choices = character(0))
-      updateSelectInput(session, "yVar", choices = character(0))
-      updateSelectInput(session, "sortVar", choices = c("None"), selected = "None")
-    } else {
-      col_names <- names(state$data)
-      num_vars <- names(state$data)[sapply(state$data, is.numeric)]
-      updateSelectInput(session, "xVar", choices = col_names, selected = state$config$xVar)
-      updateSelectInput(session, "yVar", choices = col_names, selected = state$config$yVar)
-      # Only show numeric columns in sortVar
-      updateSelectInput(session, "sortVar", choices = if (length(num_vars) > 0) c("None", num_vars) else c("None"), selected = "None")
-    }
+    col_names <- if (is.null(state$data)) character(0) else names(state$data)
+    num_vars <- c("None", names(state$data)[sapply(state$data, is.numeric)])
+    updateSelectInput(session, "xVar", choices = col_names, selected = state$config$xVar)
+    updateSelectInput(session, "yVar", choices = col_names, selected = state$config$yVar)
     updateSelectInput(session, "plotType", selected = state$config$plotType)
+    updateSelectInput(session, "yTransform", selected = state$config$yTransform)
+    updateSelectInput(session, "showValues", selected = state$config$showValues)
+    updateSelectInput(session, "sortVar", choices = num_vars, selected = state$config$sortVar)
     updateTextInput(session, "title", value = state$config$title)
     updateTextInput(session, "xLabel", value = state$config$xLabel)
     updateTextInput(session, "yLabel", value = state$config$yLabel)
     updateNumericInput(session, "pointSize", value = state$config$pointSize)
     updateNumericInput(session, "lineSize", value = state$config$lineSize)
+    updateNumericInput(session, "tickLabelSize", value = state$config$tickLabelSize)
+    updateNumericInput(session, "axisLabelSize", value = state$config$axisLabelSize)
+    updateNumericInput(session, "titleSize", value = state$config$titleSize)
+    updateNumericInput(session, "dataLabelSize", value = state$config$dataLabelSize)
     updateSelectInput(session, "theme", selected = state$config$theme)
+    updateCheckboxInput(session, "showLegend", value = state$config$showLegend)
+    updateCheckboxInput(session, "xTilt", value = state$config$xTilt)
+    updateCheckboxInput(session, "yTilt", value = state$config$yTilt)
+    updateCheckboxInput(session, "hide_x_label", value = state$config$hide_x_label)
+    updateCheckboxInput(session, "hide_y_label", value = state$config$hide_y_label)
     updateTextAreaInput(session, "description", value = state$config$description)
   })
-  
-  # Save input changes to current layer state
+
+  # Save config changes
   observe({
+    req(input$layer)
     state <- app_state()
     state[[input$layer]]$config <- list(
       xVar = input$xVar, yVar = input$yVar, title = input$title,
-      xLabel = input$xLabel, yLabel = input$yLabel,
-      plotType = input$plotType,
-      pointSize = input$pointSize,
-      lineSize = input$lineSize,
-      theme = input$theme,
+      xLabel = input$xLabel, yLabel = input$yLabel, plotType = input$plotType,
+      yTransform = input$yTransform, showValues = input$showValues, sortVar = input$sortVar,
+      pointSize = input$pointSize, lineSize = input$lineSize, tickLabelSize = input$tickLabelSize,
+      axisLabelSize = input$axisLabelSize, titleSize = input$titleSize, dataLabelSize = input$dataLabelSize,
+      theme = input$theme, showLegend = input$showLegend, xTilt = input$xTilt, yTilt = input$yTilt,
+      hide_x_label = input$hide_x_label, hide_y_label = input$hide_y_label,
+      sortAscending = state[[input$layer]]$config$sortAscending,
       description = input$description
     )
     app_state(state)
   })
-  
-  # Handle data upload for current layer
+
+  # Data upload
   observeEvent(input$dataFile, {
+    req(input$dataFile)
     ext <- tolower(tools::file_ext(input$dataFile$name))
-    data <- if (ext == "csv") read.csv(input$dataFile$datapath)
-    else if (ext == "xlsx") readxl::read_excel(input$dataFile$datapath)
-    else stop("Unsupported file type")
+    data <- switch(ext,
+                   "csv" = read.csv(input$dataFile$datapath),
+                   "xlsx" = readxl::read_excel(input$dataFile$datapath),
+                   stop("Unsupported file type")
+    )
     state <- app_state()
     state[[input$layer]]$data <- data
     app_state(state)
     col_names <- names(data)
-    x_default <- if (length(col_names) >= 1) col_names[1] else NULL
-    y_default <- if (length(col_names) >= 2) col_names[2] else NULL
-    updateSelectInput(session, "xVar", choices = col_names, selected = x_default)
-    updateSelectInput(session, "yVar", choices = col_names, selected = y_default)
-  num_vars <- names(data)[sapply(data, is.numeric)]
-  updateSelectInput(session, "sortVar", choices = if (length(num_vars) > 0) c("None", num_vars) else c("None"), selected = "None")
+    num_vars <- c("None", names(data)[sapply(data, is.numeric)])
+    updateSelectInput(session, "xVar", choices = col_names, selected = col_names[1])
+    updateSelectInput(session, "yVar", choices = col_names, selected = col_names[min(2, length(col_names))])
+    updateSelectInput(session, "sortVar", choices = num_vars, selected = "None")
   })
-  
-  # Add new layer
+
+  # Add layer
   observeEvent(input$add_layer, {
     layers <- layer_list()
     new_layer <- paste("layer", length(layers) + 1)
     state <- app_state()
-    state[[new_layer]] <- list(data = NULL, config = list(
-      xVar = NULL, yVar = NULL, title = "Chart Title",
-      xLabel = "X Variable", yLabel = "Y Variable",
-      plotType = "Scatterchart",
-      pointSize = 3, lineSize = 1.5, theme = "Minimal", description = ""
-    ))
+    state[[new_layer]] <- list(
+      data = NULL, y_lines = list(),
+      config = list(
+        xVar = NULL, yVar = NULL, title = "Chart Title",
+        xLabel = "X Variable", yLabel = "Y Variable", plotType = "Scatterchart",
+        yTransform = "None", showValues = "None", sortVar = "None",
+        pointSize = 3, lineSize = 1.5, theme = "Minimal",
+        tickLabelSize = 11, axisLabelSize = 13, titleSize = 15, dataLabelSize = 3,
+        showLegend = TRUE, xTilt = TRUE, yTilt = FALSE, sortAscending = TRUE,
+        hide_x_label = FALSE, hide_y_label = FALSE, description = ""
+      )
+    )
     app_state(state)
     layer_list(c(layers, new_layer))
     updateSelectInput(session, "layer", choices = layer_list(), selected = new_layer)
   })
-  
-  # Delete current layer (except layer 1)
+
+  # Delete layer
   observeEvent(input$delete_layer, {
     if (input$layer == "layer 1") return()
     state <- app_state()
     state[[input$layer]] <- NULL
-    layers <- layer_list()
-    layers <- layers[layers != input$layer]
-    app_state(state)
+    layers <- layer_list()[layer_list() != input$layer]
     layer_list(layers)
     updateSelectInput(session, "layer", choices = layers, selected = layers[1])
+    app_state(state)
   })
-  
-  # Reverse sort order
+
+  # Reverse sort
   observeEvent(input$reverse_sort, {
-    sort_ascending(!sort_ascending())
-  })
-  
-  # Swap X and Y variables
-  observeEvent(input$swap_xy, {
     state <- app_state()
-    current_layer <- input$layer
-    if (!is.null(state[[current_layer]])) {
-      old_x <- input$xVar
-      old_y <- input$yVar
-      old_x_label <- input$xLabel
-      old_y_label <- input$yLabel
-      updateSelectInput(session, "xVar", selected = old_y)
-      updateSelectInput(session, "yVar", selected = old_x)
-      updateTextInput(session, "xLabel", value = old_y_label)
-      updateTextInput(session, "yLabel", value = old_x_label)
-      state[[current_layer]]$config$xVar <- old_y
-      state[[current_layer]]$config$yVar <- old_x
-      state[[current_layer]]$config$xLabel <- old_y_label
-      state[[current_layer]]$config$yLabel <- old_x_label
-      app_state(state)
-    }
+    state[[input$layer]]$config$sortAscending <- !state[[input$layer]]$config$sortAscending
+    app_state(state)
   })
-  
-  # Helper function to add labels to non-polar/non-sf plots
-  add_standard_labels <- function(g, df_trans, show_val_mode, xvar, yvar, y_is_percent) {
-    if (show_val_mode == "None") return(g)
-    label <- switch(show_val_mode,
-                    "Y Variable" = if (y_is_percent) paste0(round(df_trans[[yvar]], 1), "%") else df_trans[[yvar]],
-                    "X Variable" = df_trans[[xvar]],
-                    "Both" = if (y_is_percent) paste(df_trans[[xvar]], paste0(round(df_trans[[yvar]], 1), "%"), sep = ", ") else paste(df_trans[[xvar]], df_trans[[yvar]], sep = ", ")
+
+  # Swap X/Y
+  observeEvent(input$swap_xy, {
+    old_x <- input$xVar
+    old_y <- input$yVar
+    old_x_label <- input$xLabel
+    old_y_label <- input$yLabel
+    updateSelectInput(session, "xVar", selected = old_y)
+    updateSelectInput(session, "yVar", selected = old_x)
+    updateTextInput(session, "xLabel", value = old_y_label)
+    updateTextInput(session, "yLabel", value = old_x_label)
+  })
+
+  # Label helpers
+  add_labels <- function(g, df, show_mode, xvar, yvar, is_percent, label_size, geom_type = "text") {
+    if (show_mode == "None") return(g)
+    label <- switch(show_mode,
+                    "Y Variable" = if (is_percent) paste0(round(df[[yvar]], 1), "%") else df[[yvar]],
+                    "X Variable" = df[[xvar]],
+                    "Both" = if (is_percent) paste(df[[xvar]], paste0(round(df[[yvar]], 1), "%"), sep = ", ") else paste(df[[xvar]], df[[yvar]], sep = ", ")
     )
-    g + geom_text(aes(label = label), vjust = -0.5, size = 3)
+    if (geom_type == "text") {
+      g + geom_text(aes(label = label), vjust = -0.5, size = label_size)
+    } else if (geom_type == "stack") {
+      g + geom_text(aes(label = label), position = position_stack(vjust = 0.5), size = label_size)
+    } else if (geom_type == "sf_text") {
+      g + geom_sf_text(aes(label = label), size = label_size)
+    } else g
   }
-  
-  # Helper function to add labels to pie chart
-  add_pie_labels <- function(g, agg_df, show_val_mode, pie_is_percent) {
-    if (show_val_mode == "None") return(g)
-    label <- switch(show_val_mode,
-                    "Y Variable" = if (pie_is_percent) paste0(round(agg_df$value, 1), "%") else agg_df$value,
-                    "X Variable" = agg_df$category,
-                    "Both" = if (pie_is_percent) paste(agg_df$category, paste0(round(agg_df$value, 1), "%"), sep = ", ") else paste(agg_df$category, agg_df$value, sep = ", ")
-    )
-    g + geom_text(aes(label = label), position = position_stack(vjust = 0.5), size = 3)
-  }
-  
-  # Helper function to add labels to map
-  add_map_labels <- function(g, map_sf, show_val_mode, value_col, y_is_percent) {
-    if (show_val_mode == "None") return(g)
-    label_expr <- switch(show_val_mode,
-                         "Y Variable" = if (y_is_percent) paste0(map_sf[[value_col]], "%") else map_sf[[value_col]],
-                         "X Variable" = map_sf$NAMOBJ,
-                         "Both" = if (y_is_percent) paste0(map_sf$NAMOBJ, ": ", map_sf[[value_col]], "%") else paste0(map_sf$NAMOBJ, ": ", map_sf[[value_col]])
-    )
-    g + geom_sf_text(aes(label = label_expr), size = 3)
-  }
-  
-  # Build chart based on type
-  build_chart <- function(df, cfg) {
-    if (is.null(df) || length(cfg$xVar) == 0) return(NULL)
-    sort_var <- input$sortVar
-    asc <- sort_ascending()
-    reorder_x <- function(x) x
-    if (!is.null(sort_var) && sort_var != "None" && sort_var %in% names(df) && is.numeric(df[[sort_var]])) {
-      # Only allow sorting by numeric columns
-      reorder_x <- function(x) reorder(x, if (asc) df[[sort_var]] else -df[[sort_var]])
+
+  # Reorder helper
+  get_reorder <- function(df, cfg, xvar) {
+    sort_var <- cfg$sortVar
+    asc <- cfg$sortAscending
+    if (sort_var != "None" && sort_var %in% names(df) && is.numeric(df[[sort_var]])) {
+      reorder(xvar, if (asc) df[[sort_var]] else -df[[sort_var]])
     } else {
-      reorder_x <- function(x) factor(x, levels = unique(x))
+      factor(xvar, levels = unique(xvar))
     }
-    pt <- cfg$plotType
-    show_val_mode <- input$showValues
-    show_legend <- input$showLegend
-    y_transform <- input$yTransform
+  }
+
+  # Build functions
+  build_scatter <- function(df, cfg) {
+    xvar <- cfg$xVar[1]; yvar <- cfg$yVar[1]
+    g <- ggplot(df, aes(x = get_reorder(df, cfg, .data[[xvar]]), y = .data[[yvar]])) + geom_point(size = cfg$pointSize)
+    add_labels(g, df, cfg$showValues, xvar, yvar, cfg$y_is_percent, cfg$dataLabelSize)
+  }
+
+  build_bar <- function(df, cfg) {
+    xvar <- cfg$xVar[1]; yvar <- cfg$yVar[1]
+    g <- ggplot(df, aes(x = get_reorder(df, cfg, .data[[xvar]]), y = .data[[yvar]])) + geom_col()
+    add_labels(g, df, cfg$showValues, xvar, yvar, cfg$y_is_percent, cfg$dataLabelSize)
+  }
+
+  build_line <- function(df, cfg) {
+    xvar <- cfg$xVar[1]; yvar <- cfg$yVar[1]
+    df[[xvar]] <- get_reorder(df, cfg, df[[xvar]])
+    g <- ggplot(df, aes(x = .data[[xvar]], y = .data[[yvar]])) + geom_line(size = cfg$lineSize, group = 1) + geom_point(size = cfg$pointSize)
+    add_labels(g, df, cfg$showValues, xvar, yvar, cfg$y_is_percent, cfg$dataLabelSize)
+  }
+
+  build_pie <- function(df, cfg) {
+    cat_var <- cfg$xVar[1]
+    num_var <- if (length(cfg$yVar) > 0 && is.numeric(df[[cfg$yVar[1]]])) cfg$yVar[1] else if (length(cfg$xVar) > 1 && is.numeric(df[[cfg$xVar[2]]])) cfg$xVar[2] else NULL
+    agg_df <- if (!is.null(num_var)) {
+      df %>% group_by(category = .data[[cat_var]]) %>% summarise(value = sum(.data[[num_var]], na.rm = TRUE))
+    } else {
+      as.data.frame(table(df[[cat_var]])) %>% rename(category = Var1, value = Freq)
+    }
+    if (cfg$yTransform == "Percentage") {
+      total <- sum(agg_df$value)
+      agg_df$value <- if (total > 0) round(agg_df$value / total * 100, 1) else 0
+    }
+    g <- ggplot(agg_df, aes(x = "", y = value, fill = category)) + geom_col(width = 1) + coord_polar("y") + theme_void()
+    add_labels(g, agg_df, cfg$showValues, "category", "value", cfg$yTransform == "Percentage", cfg$dataLabelSize, "stack")
+  }
+
+  build_map <- function(df, cfg) {
+    if (is.null(map_sf)) return(NULL)
+    if (is.null(df) || length(cfg$xVar) == 0 || length(cfg$yVar) == 0) {
+      return(ggplot(map_sf) + geom_sf(fill = "grey90", color = "white") + geom_sf_text(aes(label = NAMOBJ), size = 3) +
+               labs(title = "Mapchart: Sumba Timur", subtitle = "No data uploaded or variables selected"))
+    }
+    join_col <- cfg$xVar[1]; value_col <- cfg$yVar[1]
+    if (!(join_col %in% names(df)) || !(value_col %in% names(df))) {
+      return(ggplot(map_sf) + geom_sf(fill = "grey90", color = "white") + geom_sf_text(aes(label = NAMOBJ), size = 3) +
+               labs(title = "Mapchart: Sumba Timur", subtitle = "Selected columns not found in data"))
+    }
+    join_data <- df %>% rename(NAMOBJ = !!join_col) %>% select(NAMOBJ, all_of(value_col))
+    if (cfg$yTransform == "Percentage" && is.numeric(join_data[[value_col]])) {
+      total <- sum(join_data[[value_col]], na.rm = TRUE)
+      join_data[[value_col]] <- if (total > 0) round(join_data[[value_col]] / total * 100, 1) else 0
+    }
+    map_joined <- left_join(map_sf, join_data, by = "NAMOBJ")
+    label_expr <- switch(cfg$showValues,
+                         "Y Variable" = if (cfg$yTransform == "Percentage") paste0(map_joined[[value_col]], "%") else map_joined[[value_col]],
+                         "X Variable" = map_joined$NAMOBJ,
+                         "Both" = if (cfg$yTransform == "Percentage") paste0(map_joined$NAMOBJ, ": ", map_joined[[value_col]], "%") else paste0(map_joined$NAMOBJ, ": ", map_joined[[value_col]]),
+                         NULL
+    )
+    g <- ggplot(map_joined) + geom_sf(aes(fill = .data[[value_col]]), color = "white") +
+      scale_fill_viridis_c(option = "plasma", na.value = "grey90") +
+      labs(title = "Mapchart: Sumba Timur", fill = if (cfg$yTransform == "Percentage") paste0(value_col, " (%)") else value_col) +
+      theme_minimal()
+    if (!is.null(label_expr)) g <- g + geom_sf_text(aes(label = label_expr), size = cfg$dataLabelSize)
+    g
+  }
+
+  # Build chart
+  build_chart <- function(layer_state) {
+    df <- layer_state$data; cfg <- layer_state$config; y_lines <- layer_state$y_lines
+    if (is.null(df) || length(cfg$xVar) == 0) return(NULL)
     df_trans <- df
-    y_is_percent <- FALSE
-    if (y_transform == "Percentage" && pt != "Piechart" && length(cfg$yVar) > 0 && is.numeric(df[[cfg$yVar[1]]])) {
+    cfg$y_is_percent <- FALSE
+    if (cfg$yTransform == "Percentage" && cfg$plotType != "Piechart" && length(cfg$yVar) > 0 && is.numeric(df[[cfg$yVar[1]]])) {
       total <- sum(df[[cfg$yVar[1]]], na.rm = TRUE)
-      if (total != 0) {
-        df_trans[[cfg$yVar[1]]] <- round(df[[cfg$yVar[1]]] / total * 100, 1)
-      } else {
-        df_trans[[cfg$yVar[1]]] <- 0
-      }
-      y_is_percent <- TRUE
+      df_trans[[cfg$yVar[1]]] <- if (total > 0) round(df[[cfg$yVar[1]]] / total * 100, 1) else 0
+      cfg$y_is_percent <- TRUE
     }
-    p <- switch(pt,
-                "Scatterchart" = {
-                  g <- ggplot(df_trans, aes(x = reorder_x(.data[[cfg$xVar[1]]]), y = .data[[cfg$yVar[1]]])) +
-                    geom_point(size = cfg$pointSize)
-                  add_standard_labels(g, df_trans, show_val_mode, cfg$xVar[1], cfg$yVar[1], y_is_percent)
-                },
-                "Barchart" = {
-                  xvar <- cfg$xVar[1]
-                  yvar <- cfg$yVar[1]
-                  g <- ggplot(df_trans, aes(x = reorder_x(.data[[xvar]]), y = .data[[yvar]])) +
-                    geom_col()
-                  add_standard_labels(g, df_trans, show_val_mode, xvar, yvar, y_is_percent)
-                },
-                "Linechart" = {
-                  xvar <- cfg$xVar[1]
-                  yvar <- cfg$yVar[1]
-                  plot_df <- df_trans
-                  if (is.null(sort_var) || sort_var == "None" || !sort_var %in% names(df)) {
-                    plot_df[[xvar]] <- factor(plot_df[[xvar]], levels = unique(plot_df[[xvar]]))
-                  }
-                  g <- ggplot(plot_df, aes(x = .data[[xvar]], y = .data[[yvar]])) +
-                    geom_line(size = cfg$lineSize, group = 1) +
-                    geom_point(size = cfg$pointSize)
-                  add_standard_labels(g, plot_df, show_val_mode, xvar, yvar, y_is_percent)
-                },
-                "Piechart" = {
-                  cat_var <- cfg$xVar[1]
-                  num_var <- NULL
-                  if (length(cfg$yVar) > 0 && is.numeric(df[[cfg$yVar[1]]])) {
-                    num_var <- cfg$yVar[1]
-                  } else if (length(cfg$xVar) > 1 && is.numeric(df[[cfg$xVar[2]]])) {
-                    num_var <- cfg$xVar[2]
-                  }
-                  if (is.null(cat_var) || !cat_var %in% names(df)) return(NULL)
-                  pie_is_percent <- (y_transform == "Percentage")
-                  if (!is.null(num_var)) {
-                    agg_df <- aggregate(df[[num_var]], by = list(category = df[[cat_var]]), FUN = sum, na.rm = TRUE)
-                    names(agg_df)[2] <- "value"
-                    if (pie_is_percent) {
-                      total <- sum(agg_df$value, na.rm = TRUE)
-                      if (total != 0) {
-                        agg_df$value <- round(agg_df$value / total * 100, 1)
-                      } else {
-                        agg_df$value <- 0
-                      }
-                    }
-                  } else {
-                    df_count <- as.data.frame(table(df[[cat_var]]))
-                    names(df_count) <- c("category", "n")
-                    agg_df <- df_count
-                    agg_df$value <- agg_df$n
-                    if (pie_is_percent) {
-                      total <- sum(agg_df$value, na.rm = TRUE)
-                      if (total != 0) {
-                        agg_df$value <- round(agg_df$value / total * 100, 1)
-                      } else {
-                        agg_df$value <- 0
-                      }
-                    }
-                  }
-                  g <- ggplot(agg_df, aes(x = "", y = value, fill = category)) +
-                    geom_col(width = 1) +
-                    coord_polar(theta = "y") +
-                    theme_void()
-                  add_pie_labels(g, agg_df, show_val_mode, pie_is_percent)
-                },
-                "Mapchart Sumba Timur" = {
-                  gpkg_path <- list.files("www", pattern = "ADMINISTRASIKECAMATAN_AR\\.gpkg$", full.names = TRUE)
-                  if (length(gpkg_path) == 0) return(NULL)
-                  map_sf <- sf::st_read(gpkg_path[1], quiet = TRUE)
-                  if ("WADMKK" %in% names(map_sf)) {
-                    map_sf <- map_sf[map_sf$WADMKK == "Sumba Timur", ]
-                  }
-                  if (is.null(df) || is.null(cfg$xVar) || is.null(cfg$yVar) ||
-                      length(cfg$xVar) == 0 || length(cfg$yVar) == 0) {
-                    return(ggplot(map_sf) +
-                             geom_sf(fill = "grey90", color = "white") +
-                             geom_sf_text(aes(label = NAMOBJ), size = 3) +
-                             labs(title = "Mapchart: Sumba Timur", subtitle = "No data uploaded or variables selected"))
-                  }
-                  join_col <- cfg$xVar[1]
-                  value_col <- cfg$yVar[1]
-                  if (!(join_col %in% names(df)) || !(value_col %in% names(df))) {
-                    return(ggplot(map_sf) +
-                             geom_sf(fill = "grey90", color = "white") +
-                             geom_sf_text(aes(label = NAMOBJ), size = 3) +
-                             labs(title = "Mapchart: Sumba Timur", subtitle = "Selected columns not found in data"))
-                  }
-                  join_data <- df %>% dplyr::rename(NAMOBJ = !!join_col)
-                  join_data <- join_data[, c("NAMOBJ", value_col)]
-                  y_is_percent <- FALSE
-                  if (y_transform == "Percentage" && is.numeric(join_data[[value_col]])) {
-                    total <- sum(join_data[[value_col]], na.rm = TRUE)
-                    if (total != 0) {
-                      join_data[[value_col]] <- round(join_data[[value_col]] / total * 100, 1)
-                    } else {
-                      join_data[[value_col]] <- 0
-                    }
-                    y_is_percent <- TRUE
-                  }
-                  map_sf <- dplyr::left_join(map_sf, join_data, by = "NAMOBJ")
-                  g <- ggplot(map_sf) +
-                    geom_sf(aes(fill = .data[[value_col]]), color = "white") +
-                    scale_fill_viridis_c(option = "plasma", na.value = "grey90") +
-                    labs(title = "Mapchart: Sumba Timur", fill = if (y_is_percent) paste0(value_col, " (%)") else value_col) +
-                    theme_minimal()
-                  add_map_labels(g, map_sf, show_val_mode, value_col, y_is_percent)
-                }
+    p <- switch(cfg$plotType,
+                "Scatterchart" = build_scatter(df_trans, cfg),
+                "Barchart" = build_bar(df_trans, cfg),
+                "Linechart" = build_line(df_trans, cfg),
+                "Piechart" = build_pie(df, cfg),
+                "Mapchart Sumba Timur" = build_map(df, cfg)
     )
     if (is.null(p)) return(NULL)
-    ylab_out <- cfg$yLabel
-    if ((y_is_percent && pt != "Piechart") || (pt == "Piechart" && y_transform == "Percentage")) {
-      ylab_out <- paste0(cfg$yLabel, " (%)")
+    if (length(y_lines) > 0 && cfg$plotType %in% c("Scatterchart", "Barchart", "Linechart")) {
+      for (yl in y_lines) {
+        if (!is.null(yl$value) && yl$value != "") {
+          p <- p + geom_hline(yintercept = yl$value, linetype = "dashed", color = "red")
+          if (nzchar(yl$label)) {
+            p <- p + annotate("text", x = Inf, y = yl$value, label = yl$label, hjust = 1.1, vjust = -0.5, color = "red", size = cfg$tickLabelSize / 3)
+          }
+        }
+      }
     }
-    p <- p + labs(title = cfg$title, x = cfg$xLabel, y = ylab_out) +
-      switch(cfg$theme,
-             Minimal = theme_minimal(),
-             Classic = theme_classic(),
-             Gray = theme_gray(),
-             BW = theme_bw(),
-             Blank = theme_void())
-    if (input$xTilt && cfg$theme != "Blank") {
-      p <- p + theme(axis.text.x = element_text(angle = 45, hjust = 1))
-    } else if (cfg$theme == "Blank") {
+    ylab_out <- if (cfg$y_is_percent || (cfg$plotType == "Piechart" && cfg$yTransform == "Percentage")) paste0(cfg$yLabel, " (%)") else cfg$yLabel
+    xlab_final <- if (cfg$theme == "Blank" || cfg$hide_x_label) "" else cfg$xLabel
+    ylab_final <- if (cfg$theme == "Blank" || cfg$hide_y_label) "" else ylab_out
+    p <- p + labs(title = cfg$title, x = xlab_final, y = ylab_final) +
+      switch(cfg$theme, Minimal = theme_minimal(), Classic = theme_classic(), Gray = theme_gray(), BW = theme_bw(), Blank = theme_void())
+    if (cfg$hide_x_label) {
       p <- p + theme(axis.text.x = element_blank())
+    } else if (cfg$xTilt && cfg$theme != "Blank") {
+      p <- p + theme(axis.text.x = element_text(angle = 45, hjust = 1, size = cfg$tickLabelSize))
+    } else if (cfg$theme != "Blank") {
+      p <- p + theme(axis.text.x = element_text(size = cfg$tickLabelSize))
     }
-    if (!show_legend) {
-      p <- p + theme(legend.position = "none")
+    if (cfg$hide_y_label) {
+      p <- p + theme(axis.text.y = element_blank())
+    } else if (cfg$yTilt && cfg$theme != "Blank") {
+      p <- p + theme(axis.text.y = element_text(angle = 45, hjust = 1, size = cfg$tickLabelSize))
+    } else if (cfg$theme != "Blank") {
+      p <- p + theme(axis.text.y = element_text(size = cfg$tickLabelSize))
     }
+    if (cfg$theme != "Blank") {
+      p <- p + theme(axis.title.x = element_text(size = cfg$axisLabelSize), axis.title.y = element_text(size = cfg$axisLabelSize),
+                     plot.title = element_text(size = cfg$titleSize))
+    } else {
+      p <- p + theme(axis.title.x = element_blank(), axis.title.y = element_blank(), plot.title = element_text(size = cfg$titleSize))
+    }
+    if (!cfg$showLegend) p <- p + theme(legend.position = "none")
     p
   }
-  
+
   # Reactive chart
   chart_reactive <- reactive({
-    input$dataFile
-    input$xVar
-    input$yVar
-    input$plotType
-    input$sortVar
-    input$showValues
-    input$showLegend
-    input$yTransform
-    input$xTilt
-    input$layer
-    state <- app_state()[[input$layer]]
-    build_chart(state$data, state$config)
+    build_chart(app_state()[[input$layer]])
   })
-  
+
   # Render chart
   output$chart <- renderPlot({
-    if (is.null(chart_reactive())) {
-      plot.new()
-      text(0.5, 0.5, "Upload data and select variables.", adj = c(0.5, 0.5))
-    } else {
-      chart_reactive()
-    }
+    p <- chart_reactive()
+    if (is.null(p)) {
+      plot.new(); text(0.5, 0.5, "Upload data and select variables.")
+    } else p
   }, width = 800, height = 450)
-  
-  # UTC+8 time
-  get_utc8_time <- function() {
-    format(Sys.time() + 8 * 3600, "%Y-%m-%d %H:%M:%S UTC+8")
-  }
-  
-  # Text wrapping
-  wrap_text <- function(text, max_chars = 40) {
-    paste(strwrap(text, max_chars), collapse = "\n")
-  }
-  
-  # Generate header image
+
+  # Header image
   generate_header_image <- function(density = 300) {
     bg_path <- "www/background.pdf"
-    if (!file.exists(bg_path)) {
-      return(image_blank(600, 400, "lightgray") %>%
-               image_annotate("Background PDF not found", size = 20, color = "red", gravity = "center"))
-    }
-    
-    image <- image_read_pdf(bg_path, density = density)
-    img_height <- image_info(image)$height
-    image %>%
-      image_annotate(wrap_text(input$reportTitle, 25), size = 26, color = "black", weight = 700,
-                     gravity = "north", location = paste0("+0+", round(img_height * 0.25))) %>%
-      image_annotate(wrap_text(input$reportDescription, 80), size = 14, color = "black", weight = 700,
-                     gravity = "north", location = paste0("+0+", round(img_height * 0.5))) %>%
-      image_annotate(paste("Author:", input$userName), size = 12, color = "black", weight = 700,
-                     gravity = "north", location = paste0("+0+", round(img_height * 0.8))) %>%
-      image_annotate(paste("Export:", get_utc8_time()), size = 12, color = "black", weight = 700,
-                     gravity = "north", location = paste0("+0+", round(img_height * 0.83)))
+    if (!file.exists(bg_path)) return(image_blank(600, 400, "lightgray") %>% image_annotate("Background PDF not found", size = 20, color = "red", gravity = "center"))
+    img <- image_read_pdf(bg_path, density = density)
+    h <- image_info(img)$height
+    img %>%
+      image_annotate(strwrap(input$reportTitle, 25), size = 26, color = "black", weight = 700, gravity = "north", location = paste0("+0+", round(h * 0.25))) %>%
+      image_annotate(strwrap(input$reportDescription, 80), size = 14, color = "black", weight = 700, gravity = "north", location = paste0("+0+", round(h * 0.5))) %>%
+      image_annotate(paste("Author:", input$userName), size = 12, color = "black", weight = 700, gravity = "north", location = paste0("+0+", round(h * 0.8))) %>%
+      image_annotate(paste("Export:", format(Sys.time() + 8*3600, "%Y-%m-%d %H:%M:%S UTC+8")), size = 12, color = "black", weight = 700, gravity = "north", location = paste0("+0+", round(h * 0.83)))
   }
-  
-  # Download PDF
+
+  # Download
   output$downloadPlot <- downloadHandler(
     filename = function() paste0("report-", Sys.Date(), ".pdf"),
     content = function(file) {
-      # Header page
       header_temp <- tempfile(fileext = ".pdf")
       image_write(generate_header_image(), header_temp, format = "pdf")
       temp_pages <- header_temp
-      
-      # Background image
       bg_path <- "www/background.pdf"
-      bg_image <- if (file.exists(bg_path)) image_read_pdf(bg_path, density = 300) else image_blank(800, 600, "white")
-      
-      # Process layers
+      bg_img <- if (file.exists(bg_path)) image_read_pdf(bg_path, density = 300) else image_blank(800, 600, "white")
       for (layer in layer_list()) {
-        state <- app_state()[[layer]]
-        if (is.null(state$data) || length(state$config$xVar) == 0 || length(state$config$yVar) == 0) next
-        
-        # Create chart
-        p <- build_chart(state$data, state$config)
-        
-        # Save chart to temp PDF
+        layer_state <- app_state()[[layer]]
+        if (is.null(layer_state$data) || length(layer_state$config$xVar) == 0 || length(layer_state$config$yVar) == 0) next
+        p <- build_chart(layer_state)
         temp_chart <- tempfile(fileext = ".pdf")
-        pdf(temp_chart, width = chart_dims["width"], height = chart_dims["height"])
-        print(p)
+        ggsave(temp_chart, p, width = chart_dims["width"], height = chart_dims["height"], units = "in")
+        insights <- trimws(layer_state$config$description)
+        lines <- if (nzchar(insights)) strwrap(insights, 120) else "No description provided."
+        text_h <- max(length(lines) * 0.2, 0.4)
+        temp_ins <- tempfile(fileext = ".pdf")
+        pdf(temp_ins, width = chart_dims["width"], height = text_h)
+        par(mar = rep(0.2, 4)); plot.new()
+        text(0, 1, paste(lines, collapse = "\n"), adj = c(0, 1), cex = 0.8)
         dev.off()
-        
-        # Process insights
-  insights <- trimws(state$config$description)
-  # Use a large width for strwrap to minimize wrapping, so text uses all plot width
-  plot_char_width <- 120  # adjust this value if needed for your font size and plot width
-  lines <- if (nchar(insights) > 0) strwrap(insights, width = plot_char_width) else "No description provided."
-  text_height <- max(length(lines) * 0.2, 0.4)
-        
-  # Save insights to temp PDF
-  temp_insights <- tempfile(fileext = ".pdf")
-  pdf(temp_insights, width = chart_dims["width"], height = text_height)
-  par(mar = c(0.2, 0.2, 0.2, 0.2))
-  plot.new()
-  # Use adj = c(0, 1) for left-top alignment, cex for font size
-  text(0, 1, paste(lines, collapse = "\n"), adj = c(0, 1), cex = 0.8)
-  dev.off()
-        
-        # Combine chart and insights with background
         chart_img <- image_read_pdf(temp_chart, density = 300) %>% image_border("black", "12x12")
-        insights_img <- image_read_pdf(temp_insights, density = 300)
-        combined_image <- image_append(c(chart_img, insights_img), stack = TRUE)
-        result_image <- image_composite(bg_image, combined_image, gravity = "center")
-        
-        # Save combined page
+        ins_img <- image_read_pdf(temp_ins, density = 300)
+        combined <- image_append(c(chart_img, ins_img), stack = TRUE)
+        result <- image_composite(bg_img, combined, gravity = "center")
         temp_page <- tempfile(fileext = ".pdf")
-        image_write(result_image, temp_page, format = "pdf")
+        image_write(result, temp_page, format = "pdf")
         temp_pages <- c(temp_pages, temp_page)
-        unlink(c(temp_chart, temp_insights))
+        unlink(c(temp_chart, temp_ins))
       }
-      
-      # Append last page if exists
-      last_page_path <- "www/last_page.pdf"
-      if (file.exists(last_page_path)) temp_pages <- c(temp_pages, last_page_path)
-      
-      # Combine all pages into final PDF
+      last_page <- "www/last_page.pdf"
+      if (file.exists(last_page)) temp_pages <- c(temp_pages, last_page)
       pdf_combine(temp_pages, output = file)
-      unlink(setdiff(temp_pages, last_page_path))
+      unlink(temp_pages[temp_pages != last_page])
     }
   )
 }
